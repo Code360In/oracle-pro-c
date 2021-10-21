@@ -1,0 +1,4 @@
+export LD_LIBRARY_PATH=/usr/local/lib64:/home/oracle/instantclient_21_3:$LD_LIBRARY_PATH
+export ORACLE_HOME=/home/oracle/instantclient_21_3
+export ODBCSYSINI=${PWD}
+export ODBCINI=${PWD}/odbc.ini

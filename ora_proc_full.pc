@@ -1,0 +1,301 @@
+#include <stdio.h>
+#include <string.h>
+#include <sqlca.h>
+#include <stdlib.h>
+#include <sqlda.h>
+#include <sqlcpr.h>
+#include <oci.h>
+#include <fcntl.h>
+#include <errno.h>
+
+#define STMT_BUF_SIZE 256
+#define UNAME_LEN      20
+#define PWD_LEN        11
+#define NLSLANG "SIMPLIFIED CHINESE_CHINA.UTF8"
+#define NLSDATE "YYYY-MM-DD HH24:MI:SS"
+#define NLSTIMESTAMP "YYYY-MM-DD HH24:MI:SS.FF6"
+#define MAX_LONG_SIZE 409600
+#define LOB_BUF_SIZE 2048
+
+sb2 yr_to_internal(const sb2 myyr){
+    ub2 yrtmp = myyr%100 + 100;
+    ub2 cttmp = myyr/100 + 100;
+    ub2 hitmp = ((yrtmp)<<8);
+    return hitmp + cttmp;
+}
+
+sb2 internal_to_yr(const ub2 myint){
+    ub2 tmp = 0;
+    for(tmp=1970;tmp<=9999;tmp++){
+       ub2 yrtmp = tmp%100 + 100;
+       ub2 cttmp = tmp/100 + 100;
+       ub2 hitmp = ((yrtmp)<<8) ;
+       if((hitmp + cttmp) == myint)
+           break;
+    }
+    return tmp;
+}
+
+//SHOULD BE WORKED ON AIX/WINDOWS FOR BIG ENDIAN
+/*
+sb2 yr_to_internal(const sb2 myyr){
+    ub2 yrtmp = myyr%100 + 100;
+    ub2 cttmp = myyr/100 + 100;
+    ub2 hitmp = ((cttmp)<<8);
+    return hitmp + cttmp;
+}
+
+sb2 internal_to_yr(const ub2 myint){
+    ub2 tmp = 0;
+    for(tmp=1970;tmp<=9999;tmp++){
+       ub2 yrtmp = tmp%100 + 100;
+       ub2 cttmp = tmp/100 + 100;
+       ub2 hitmp = ((cttmp)<<8) ;
+       if((hitmp + cttmp) == myint)
+           break;
+    }
+    return tmp;
+}
+*/
+
+void error_check(char *msg)
+{
+    char err_msg[512];
+    size_t buf_len, msg_len;
+    printf("%s\n",msg);
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+
+    buf_len = sizeof (err_msg);
+    sqlglm(err_msg, &buf_len, &msg_len);
+    printf("%.*s\n", msg_len, err_msg);
+    EXEC SQL ROLLBACK RELEASE;
+    exit(EXIT_FAILURE);
+}
+
+void setEnv() {
+    int res = setenv("NLS_LANG", NLSLANG, 1);
+    if(res){
+       printf("%s\n","FAILED SETTING NLS_LANG");
+       exit(9);
+    }
+    res = setenv("NLS_DATE_FORMAT", NLSDATE, 1);
+    if(res){
+       printf("%s\n","FAILED SETTING NLS_DATE");
+       exit(9);
+    }
+    res = setenv("NLS_TIMESTAMP_FORMAT", NLSTIMESTAMP, 1);
+    if(res){
+       printf("%s\n","FAILED SETTING NLS_TIMESTAMP");
+       exit(9);
+    }
+}
+
+
+int main() {
+    struct stat     statbuf;
+EXEC SQL BEGIN DECLARE SECTION;
+    int colCount = 0;
+    int colidx,colextid;
+    char colname[10];
+    char colexttype[10];
+    int coltype,collen,colprecision,colscale,colnullable,colitype,colilength;
+    int errnum,flag = 0;
+    long blobsize,offset;
+    char strstmt[STMT_BUF_SIZE];
+    char myuser[20];
+    char mypass[20];
+    char myservice[20];
+    long file_size = 0;
+
+    struct proctest_t {
+      int uid;
+      char uname[200];
+      char udate[32];
+      char udatetime[32];
+      float ufloat;
+      char udecimal[20];
+      char *utext;
+      OCIClobLocator  *uclob;
+      OCIBFileLocator *ubyte;
+      OCIBlobLocator  *ublob;
+    } proctest_rec;
+EXEC SQL END DECLARE SECTION;
+    
+    setEnv();
+    EXEC SQL WHENEVER SQLERROR DO error_check("ORACLE error--");
+
+    sprintf(myuser,"knight");
+    sprintf(mypass,"oracle");
+    sprintf(myservice,"pdborcl");
+    EXEC SQL CONNECT :myuser IDENTIFIED BY :mypass USING :myservice;
+
+    EXEC SQL select count(1) INTO :flag from user_tables where table_name = 'PROCTEST';
+    if(flag)
+       EXEC SQL drop table PROCTEST;
+
+    sprintf(strstmt,"create table proctest(");
+    strcat(strstmt,"userid integer,");
+    strcat(strstmt,"uname varchar2(100),");
+    strcat(strstmt,"udate date,");
+    strcat(strstmt,"udatetime timestamp(6),");
+    strcat(strstmt,"ufloat float,");
+    strcat(strstmt,"udecimal number(12,4),");
+    strcat(strstmt,"utext long,");
+    strcat(strstmt,"uclob clob,");
+    strcat(strstmt,"ubyte bfile,");
+    strcat(strstmt,"ublob blob,");
+    strcat(strstmt,"constraint proctest_pk primary key(userid)");
+    strcat(strstmt,")");
+    printf("%s\n",strstmt);
+
+    EXEC SQL execute immediate :strstmt;
+
+    sprintf(strstmt,"insert into proctest");
+    strcat(strstmt,"(userid");
+    strcat(strstmt,",uname");
+    strcat(strstmt,",udate");
+    strcat(strstmt,",udatetime");
+    strcat(strstmt,",ufloat");
+    strcat(strstmt,",udecimal");
+    strcat(strstmt,",utext");
+    strcat(strstmt,",uclob");
+    strcat(strstmt,",ubyte");
+    strcat(strstmt,",ublob");
+    strcat(strstmt,")");
+    strcat(strstmt," values(");
+    strcat(strstmt,":USERID");
+    strcat(strstmt,",:UNAME");
+    strcat(strstmt,",:UDATE");
+    strcat(strstmt,",:UDATETIME");
+    strcat(strstmt,",:UFLOAT");
+    strcat(strstmt,",:UDECIMAL");
+    strcat(strstmt,",:UTEXT");
+    strcat(strstmt,",:UCLOB");
+    strcat(strstmt,",:UBYTE");
+    strcat(strstmt,",:UBLOB");
+    strcat(strstmt,")");
+    printf("%s\n",strstmt);
+
+    EXEC SQL prepare the_insert from :strstmt;
+    
+    char text_file_name[20] = "/etc/passwd";
+
+    proctest_rec.uid = 666;
+    sprintf(proctest_rec.uname,"卡布达");
+    sprintf(proctest_rec.udate,"2010-03-12 00:00:00");
+    sprintf(proctest_rec.udatetime,"2010-03-12 23:12:31.412351");
+    proctest_rec.ufloat = 9.999f;
+    sprintf(proctest_rec.udecimal,"123141.5123");
+
+    if (stat((char *)text_file_name,&statbuf) == -1)
+    {
+        fprintf (stdout, "Error %d reading %s\n", errno, text_file_name);
+        exit(1);
+    }
+    file_size = statbuf.st_size;
+   
+    int fp = 0;
+    long opsize=0;
+    if ((fp = open(text_file_name,O_RDONLY))<0){
+        printf("%s\n","cant not open file for file");
+        return(9);
+    } else {
+        proctest_rec.utext = (char *)malloc(file_size + 1);
+        read(fp,proctest_rec.utext,file_size);
+    }
+   
+    char clob_buf[LOB_BUF_SIZE];
+    EXEC SQL ALLOCATE :proctest_rec.uclob;
+    EXEC SQL LOB CREATE TEMPORARY :proctest_rec.uclob;
+    EXEC SQL LOB OPEN :proctest_rec.uclob READ WRITE;
+
+    char clob_file_name[20] = "/etc/services";
+    if (stat((char *)clob_file_name,&statbuf) == -1)
+    {
+        fprintf (stdout, "Error %d reading %s\n", errno, clob_file_name);
+        exit(1);
+    }
+    file_size = statbuf.st_size;
+    if ((fp = open(clob_file_name,O_RDONLY))<0){
+        printf("%s\n","cant not open file for file");
+        return(9);
+    } else {
+        opsize = read(fp,clob_buf,LOB_BUF_SIZE);
+    }
+
+    offset = 1;
+    if(opsize<LOB_BUF_SIZE){
+       EXEC SQL LOB WRITE ONE :file_size FROM :clob_buf into :proctest_rec.uclob;
+    } else { 
+       EXEC SQL LOB WRITE FIRST :file_size FROM :clob_buf into :proctest_rec.uclob;
+    }
+   
+    offset+=LOB_BUF_SIZE;
+    while(1){
+       memset(clob_buf,0,LOB_BUF_SIZE);
+       opsize = read(fp,clob_buf,LOB_BUF_SIZE);
+       if(opsize<LOB_BUF_SIZE){
+           EXEC SQL LOB WRITE APPEND LAST :file_size FROM :clob_buf into :proctest_rec.uclob;
+           break;
+       } else {
+           EXEC SQL LOB WRITE APPEND NEXT :file_size FROM :clob_buf into :proctest_rec.uclob;
+       }
+       offset+=LOB_BUF_SIZE;
+    }
+    EXEC SQL LOB CLOSE :proctest_rec.uclob;
+
+    char dirname[] = "KNIGHTDIR";
+    char byte_file_name[] = "cat.jpg";
+    EXEC SQL ALLOCATE :proctest_rec.ubyte;
+    EXEC SQL LOB FILE SET :proctest_rec.ubyte DIRECTORY=:dirname, FILENAME=:byte_file_name;
+  
+    unsigned char blob_buf[LOB_BUF_SIZE];
+    EXEC SQL VAR blob_buf IS RAW(LOB_BUF_SIZE);
+    EXEC SQL ALLOCATE :proctest_rec.ublob;
+    EXEC SQL LOB CREATE TEMPORARY :proctest_rec.ublob;
+    EXEC SQL LOB OPEN :proctest_rec.ublob READ WRITE;
+
+    char blob_file_name[20] = "cat.jpg";
+    if (stat((char *)blob_file_name,&statbuf) == -1)
+    {
+        fprintf (stdout, "Error %d reading %s\n", errno, blob_file_name);
+        exit(1);
+    }
+    file_size = statbuf.st_size;
+    if ((fp = open(blob_file_name,O_RDONLY))<0){
+        printf("%s\n","cant not open file for file");
+        return(9);
+    } else {
+        opsize = read(fp,blob_buf,LOB_BUF_SIZE);
+    }
+
+    offset = 1;
+    if(opsize<LOB_BUF_SIZE){
+       EXEC SQL LOB WRITE ONE :file_size FROM :blob_buf into :proctest_rec.ublob;
+    } else {
+       EXEC SQL LOB WRITE FIRST :file_size FROM :blob_buf into :proctest_rec.ublob;
+    }
+
+    offset+=LOB_BUF_SIZE;
+    while(1){
+       memset(clob_buf,0,LOB_BUF_SIZE);
+       opsize = read(fp,blob_buf,LOB_BUF_SIZE);
+       if(opsize<LOB_BUF_SIZE){
+           EXEC SQL LOB WRITE APPEND LAST :file_size FROM :blob_buf into :proctest_rec.ublob;
+           break;
+       } else {
+           EXEC SQL LOB WRITE APPEND NEXT :file_size FROM :blob_buf into :proctest_rec.ublob;
+       }
+       offset+=LOB_BUF_SIZE;
+    }
+    EXEC SQL LOB CLOSE :proctest_rec.ublob;
+
+    //EXEC SQL execute the_insert using :proctest_rec.uid,:proctest_rec.uname,:proctest_rec.udate,:proctest_rec.udatetime,:proctest_rec.ufloat,:proctest_rec.udecimal,:proctest_rec.utext,:proctest_rec.uclob,:proctest_rec.ubyte,:proctest_rec.ublob;
+    EXEC SQL execute the_insert using :proctest_rec;
+    
+    int myrow = sqlca.sqlerrd[2];
+    printf("Rows Affected:%d\n",myrow);
+
+    EXEC SQL COMMIT WORK RELEASE;
+    exit(0);
+}
