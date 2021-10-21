@@ -106,7 +106,10 @@ EXEC SQL BEGIN DECLARE SECTION;
     char mypass[20];
     char myservice[20];
     long file_size = 0;
-
+    char dirname[20];
+    char byte_file_name[20];
+    char clob_buf[LOB_BUF_SIZE];
+    unsigned char blob_buf[LOB_BUF_SIZE];
     struct proctest_t {
       int uid;
       char uname[200];
@@ -204,7 +207,7 @@ EXEC SQL END DECLARE SECTION;
         read(fp,proctest_rec.utext,file_size);
     }
    
-    char clob_buf[LOB_BUF_SIZE];
+    //char clob_buf[LOB_BUF_SIZE];
     EXEC SQL ALLOCATE :proctest_rec.uclob;
     EXEC SQL LOB CREATE TEMPORARY :proctest_rec.uclob;
     EXEC SQL LOB OPEN :proctest_rec.uclob READ WRITE;
@@ -244,12 +247,12 @@ EXEC SQL END DECLARE SECTION;
     }
     EXEC SQL LOB CLOSE :proctest_rec.uclob;
 
-    char dirname[] = "KNIGHTDIR";
-    char byte_file_name[] = "cat.jpg";
+    sprintf(dirname,"KNIGHTDIR");
+    sprintf(byte_file_name, "cat.jpg");
     EXEC SQL ALLOCATE :proctest_rec.ubyte;
     EXEC SQL LOB FILE SET :proctest_rec.ubyte DIRECTORY=:dirname, FILENAME=:byte_file_name;
   
-    unsigned char blob_buf[LOB_BUF_SIZE];
+    //unsigned char blob_buf[LOB_BUF_SIZE];
     EXEC SQL VAR blob_buf IS RAW(LOB_BUF_SIZE);
     EXEC SQL ALLOCATE :proctest_rec.ublob;
     EXEC SQL LOB CREATE TEMPORARY :proctest_rec.ublob;
@@ -296,6 +299,40 @@ EXEC SQL END DECLARE SECTION;
     int myrow = sqlca.sqlerrd[2];
     printf("Rows Affected:%d\n",myrow);
 
+    sprintf(strstmt,"select * from proctest");
+    printf("%s\n",strstmt);
+
+    EXEC SQL PREPARE the_select FROM :strstmt;
+    EXEC SQL DECLARE mycursor CURSOR for the_select;
+    EXEC SQL ALLOCATE DESCRIPTOR 'mydesc';
+    EXEC SQL describe the_select using sql descriptor 'mydesc';
+    EXEC SQL OPEN mycursor;
+    EXEC SQL get descriptor 'mydesc' :colCount= COUNT;
+    printf("Column Number:%d\n",colCount);
+    for (colidx=1;colidx<=colCount;colidx++){
+        EXEC SQL get descriptor 'mydesc' VALUE :colidx
+        :colname = NAME,
+        :coltype = TYPE,
+        :collen = LENGTH,
+        :colprecision = PRECISION,
+        :colscale = SCALE,
+        :colnullable = NULLABLE;
+        printf("Name:%s\t",colname);
+        printf("Type:%d\t",coltype);
+        printf("Length:%d\t",collen);
+        printf("Precision:%d\t",colprecision);
+        printf("Scale:%d\t",colscale);
+        printf("Nullable:%d\n",colnullable);
+    }
+
+//    EXEC SQL WHENEVER NOT FOUND GOTO exit;                 
+//    for (;;) {
+//       EXEC SQL FETCH mycursor USING DESCRIPTOR select_dp;               
+//    }
+//    EXEC SQL COMMIT WORK RELEASE;
+
+exit:
+    EXEC SQL CLOSE mycursor;
     EXEC SQL COMMIT WORK RELEASE;
     exit(0);
 }
