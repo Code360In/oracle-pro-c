@@ -11,7 +11,8 @@
 #define STMT_BUF_SIZE 256
 #define UNAME_LEN      20
 #define PWD_LEN        11
-#define NLSLANG "SIMPLIFIED CHINESE_CHINA.UTF8"
+//#define NLSLANG "SIMPLIFIED CHINESE_CHINA.UTF8"
+#define NLSLANG "AMERICAN_AMERICA.UTF8"
 #define NLSDATE "YYYY-MM-DD HH24:MI:SS"
 #define NLSTIMESTAMP "YYYY-MM-DD HH24:MI:SS.FF6"
 #define MAX_LONG_SIZE 409600
@@ -302,7 +303,7 @@ EXEC SQL END DECLARE SECTION;
     int myrow = sqlca.sqlerrd[2];
     printf("Rows Affected:%d\n",myrow);
 
-    sprintf(strstmt,"select * from proctest");
+    sprintf(strstmt,"select userid,uname,udate,udatetime,ufloat,udecimal,utext,uclob,ubyte,ublob from proctest");
     printf("%s\n",strstmt);
 
     EXEC SQL PREPARE the_select FROM :strstmt;
@@ -314,10 +315,10 @@ EXEC SQL END DECLARE SECTION;
     EXEC SQL DESCRIBE SELECT LIST FOR the_select INTO mydesc;
     mydesc->N = mydesc->F;
     colCount = mydesc->F;
-    printf("Column Number:%d\n",colCount);
+    printf("Column Number:%d\n\n",colCount);
 
+    //SQLDA in Pro*C Cant Work with LOB Type including BFILE BLOB CLOB, CAN only be handle by ANSI EXEC SQL LOB STATMENT
     char colname[MAX_COLNAME_LEN];
-    printf("%d\n",mydesc->T[1]);
     for (colidx=0;colidx<colCount;colidx++){
         memset(colname,0,MAX_COLNAME_LEN);
         strncpy(colname, mydesc->S[colidx], mydesc->C[colidx]);
@@ -330,87 +331,31 @@ EXEC SQL END DECLARE SECTION;
         printf("Scale:%d\t",scal);
         printf("Nullable:%d\n",nullok);
     }
+    printf("\n");
 
-    int i;
-    for (i = 0; i < mydesc->F; i++) {
-        /* Turn off high-order bit of datatype (in this example,
-           it does not matter if the column is NOT NULL). */
-        sqlnul (&(mydesc->T[i]),
-                &(mydesc->T[i]), &nullok);
-
-        switch (mydesc->T[i])
-        {
-            case  1 : /* CHAR datatype: no change in length
-                         needed, except possibly for TO_CHAR
-                         conversions (not handled here). */
-                break;
-            case  2 : /* NUMBER datatype: use sqlprc() to
-                         extract precision and scale. */
-                sqlprc (&(mydesc->L[i]), &prec, &scal);
-                      /* Allow for maximum size of NUMBER. */
-                if (prec == 0) prec = 40;
-                      /* Also allow for decimal point and
-                         possible sign. */
-                /* convert NUMBER datatype to FLOAT if scal > 0,
-                   INT otherwise. */
-                if (scal > 0)
-                    mydesc->L[i] = sizeof(float);
-                else
-                    mydesc->L[i] = sizeof(int);
-                break;
-
-            case  8 : /* LONG datatype */
-                mydesc->L[i] = 240;
-                break;
-
-            case 11 : /* ROWID datatype */
-                mydesc->L[i] = 18;
-                break;
-
-            case 12 : /* DATE datatype */
-                mydesc->L[i] = 9;
-                break;
- 
-            case 23 : /* RAW datatype */
-                break;
-
-            case 24 : /* LONG RAW datatype */
-                mydesc->L[i] = 240;
-                break;
-        }
-        /* Allocate space for the select-list data values.
-           sqlald() reserves a pointer location for
-           V[i] but does not allocate the full space for
-           the pointer.  */
-
-         if (mydesc->T[i] != 2)
-           mydesc->V[i] = (char *) realloc(mydesc->V[i], mydesc->L[i] + 1);  
-         else
-           mydesc->V[i] = (char *) realloc(mydesc->V[i], mydesc->L[i]);  
-
-        /* Coerce ALL datatypes except for LONG RAW and NUMBER to
-           character. */
-        if (mydesc->T[i] != 24 && mydesc->T[i] != 2)
-            mydesc->T[i] = 1;
-
-        /* Coerce the datatypes of NUMBERs to float
-           or int depending on the scale. */
-        if (mydesc->T[i] == 2)
-          if (scal > 0)
-             mydesc->T[i] = 4;  /* float */
-          else
-             mydesc->T[i] = 3;  /* int */
-    }
-    printf("\n\n");
-
+    EXEC SQL OPEN mycursor;
     EXEC SQL WHENEVER NOT FOUND GOTO exit;                 
+
+//  just use struct created before and allocate memeory for descriptor type col
+
+    struct proctest_t myout_rec;
+    EXEC SQL ALLOCATE :myout_rec.uclob;
+    EXEC SQL ALLOCATE :myout_rec.ubyte;
+    EXEC SQL ALLOCATE :myout_rec.ublob;
     for (;;) {
-       EXEC SQL FETCH mycursor USING DESCRIPTOR mydesc;               
+       EXEC SQL FETCH mycursor INTO myout_rec;
+       printf("%d\n",proctest_rec.uid);
+       printf("%s\n",proctest_rec.uname);
+       printf("%s\n",proctest_rec.udate);
+       printf("%s\n",proctest_rec.udatetime);
+       printf("%f\n",proctest_rec.ufloat);
+       printf("%s\n",proctest_rec.udecimal);
+       printf("%s\n",proctest_rec.utext);
     }
 //    EXEC SQL COMMIT WORK RELEASE;
 
-exit:
     EXEC SQL CLOSE mycursor;
     EXEC SQL COMMIT WORK RELEASE;
-    exit(0);
+exit:
+    return 0;
 }
