@@ -11,11 +11,11 @@
 #define STMT_BUF_SIZE 256
 #define UNAME_LEN      20
 #define PWD_LEN        11
-//#define NLSLANG "SIMPLIFIED CHINESE_CHINA.UTF8"
-#define NLSLANG "AMERICAN_AMERICA.UTF8"
+#define NLSLANG "SIMPLIFIED CHINESE_CHINA.UTF8"
+//#define NLSLANG "AMERICAN_AMERICA.UTF8"
 #define NLSDATE "YYYY-MM-DD HH24:MI:SS"
 #define NLSTIMESTAMP "YYYY-MM-DD HH24:MI:SS.FF6"
-#define MAX_LONG_SIZE 409600
+#define MAX_LONG_SIZE 40960
 #define LOB_BUF_SIZE 2048
 #define MAX_COLNAME_LEN 10
 #define MAX_COL_NUM 20
@@ -112,16 +112,17 @@ EXEC SQL BEGIN DECLARE SECTION;
     long file_size = 0;
     char dirname[20];
     char byte_file_name[20];
+    char text_buf[LOB_BUF_SIZE];
     char clob_buf[LOB_BUF_SIZE];
     unsigned char blob_buf[LOB_BUF_SIZE];
     struct proctest_t {
       int uid;
-      char uname[200];
+      char uname[20];
       char udate[32];
       char udatetime[32];
       float ufloat;
       char udecimal[20];
-      char *utext;
+      char utext[MAX_LONG_SIZE];
       OCIClobLocator  *uclob;
       OCIBFileLocator *ubyte;
       OCIBlobLocator  *ublob;
@@ -207,7 +208,7 @@ EXEC SQL END DECLARE SECTION;
         printf("%s\n","cant not open file for file");
         return(9);
     } else {
-        proctest_rec.utext = (char *)malloc(file_size + 1);
+        //proctest_rec.utext = (char *)malloc(file_size + 1);
         read(fp,proctest_rec.utext,file_size);
     }
    
@@ -335,27 +336,87 @@ EXEC SQL END DECLARE SECTION;
 
     EXEC SQL OPEN mycursor;
     EXEC SQL WHENEVER NOT FOUND GOTO exit;                 
+    mode_t f_attrib;
+    f_attrib=S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH;
 
 //  just use struct created before and allocate memeory for descriptor type col
 
+    char mytext_file_name[20]="text_passwd";
+    char myclob_file_name[20]="clob_services";
+    char mybyte_file_name[20]="byte_cat.jpg";
+    char myblob_file_name[20]="blob_cat.jpg";
+    file_size = 0;
     struct proctest_t myout_rec;
     EXEC SQL ALLOCATE :myout_rec.uclob;
     EXEC SQL ALLOCATE :myout_rec.ubyte;
     EXEC SQL ALLOCATE :myout_rec.ublob;
     for (;;) {
        EXEC SQL FETCH mycursor INTO myout_rec;
-       printf("%d\n",proctest_rec.uid);
-       printf("%s\n",proctest_rec.uname);
-       printf("%s\n",proctest_rec.udate);
-       printf("%s\n",proctest_rec.udatetime);
-       printf("%f\n",proctest_rec.ufloat);
-       printf("%s\n",proctest_rec.udecimal);
-       printf("%s\n",proctest_rec.utext);
-    }
-//    EXEC SQL COMMIT WORK RELEASE;
+       printf("%d\n",myout_rec.uid);
+       printf("%s\n",myout_rec.uname);
+       printf("%s\n",myout_rec.udate);
+       printf("%s\n",myout_rec.udatetime);
+       printf("%f\n",myout_rec.ufloat);
+       printf("%s\n",myout_rec.udecimal);
+       if ((fp = open((char *)mytext_file_name,O_WRONLY|O_CREAT|O_TRUNC,f_attrib))<0){
+          printf("%s\n","cant not open file for file");
+          return(9);
+       } else {
+          for(file_size=strlen(myout_rec.utext)-1;file_size>0;file_size--){
+             if(myout_rec.utext[file_size] == ' '){
+                myout_rec.utext[file_size] = '\0';
+             } else {
+                file_size++;
+                myout_rec.utext[file_size] = '\0';
+                break;
+             }
+          }
+          opsize = write(fp,myout_rec.utext,file_size);
+          if (opsize < 0) {
+             fprintf (stdout, "Error %d writing %s\n", errno, mytext_file_name);
+          }
+          if (close(fp) < 0) {
+             fprintf (stdout, "Error %d closing the file %s\n", errno, mytext_file_name);
+             exit(1);
+          }
+       }
 
+       offset = 1;
+       EXEC SQL LOB OPEN :myout_rec.uclob READ ONLY;
+       EXEC SQL LOB DESCRIBE :myout_rec.uclob GET LENGTH INTO :file_size;
+       EXEC SQL WHENEVER NOT FOUND CONTINUE;
+       if ((fp = open((char *)myclob_file_name,O_WRONLY|O_CREAT|O_TRUNC,f_attrib))<0){
+          printf("%s\n","cant not open file for file");
+          return(9);
+       } 
+       int amt = 0;
+       while (1){
+          memset(clob_buf,0,LOB_BUF_SIZE);
+          EXEC SQL LOB READ :amt FROM :myout_rec.uclob AT :offset into :clob_buf;
+          offset += amt;
+          if(offset >= file_size){
+             opsize = write(fp,clob_buf,amt);
+             if (opsize < 0) {
+                fprintf (stdout, "Error %d writing %s\n", errno, myclob_file_name);
+             }
+             if (close(fp) < 0) {
+                fprintf (stdout, "Error %d closing the file %s\n", errno, myclob_file_name);
+                exit(1);
+             }
+             break; 
+          } else {
+             opsize = write(fp,clob_buf,amt);
+             if (opsize < 0) {
+                fprintf (stdout, "Error %d writing %s\n", errno, myclob_file_name);
+             }
+          }
+       }
+
+       EXEC SQL LOB CLOSE :myout_rec.uclob;
+    }
+
+exit:
     EXEC SQL CLOSE mycursor;
     EXEC SQL COMMIT WORK RELEASE;
-exit:
     return 0;
 }
